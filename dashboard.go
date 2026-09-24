@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,6 +30,11 @@ type dData struct {
 	Groups                    []dGroup
 	Courses                   []dCourse
 	NOver, NSoon, NWeek, NAll int
+	Group                     string
+	Lect                      []webinar
+	Quiz                      []quiz
+	QuizDone                  int
+	Warn                      []string
 }
 
 type dGroup struct {
@@ -151,6 +157,37 @@ func dashData(s *sess) (*dData, error) {
 	for _, id := range order {
 		d.Courses = append(d.Courses, *cs[id])
 	}
+	// lectures and quizzes (slower: page per element) — in parallel
+	d.Group = loadCfg().Group
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	warn := func(m string) { mu.Lock(); d.Warn = append(d.Warn, m); mu.Unlock() }
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if ws, err := s.webinars(0, normGroup(d.Group), 3*24*time.Hour, 7*24*time.Hour); err == nil {
+			d.Lect = ws
+		} else {
+			warn("лекции: " + err.Error())
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		qs, err := s.quizzes(0)
+		if err != nil {
+			warn("тесты: " + err.Error())
+			return
+		}
+		for _, q := range qs {
+			switch q.State {
+			case "open", "open_retry", "in_progress", "not_open":
+				d.Quiz = append(d.Quiz, q)
+			case "done":
+				d.QuizDone++
+			}
+		}
+	}()
+	wg.Wait()
 	return d, nil
 }
 
@@ -172,6 +209,11 @@ func buildDashboard(s *sess) (string, error) {
 var typeRu = map[string]string{"assign": "задание", "quiz": "тест", "forum": "форум", "workshop": "семинар", "lesson": "лекция", "feedback": "опрос", "choice": "опрос", "scorm": "курс", "h5pactivity": "интерактив"}
 
 var dashTpl = template.Must(template.New("d").Funcs(template.FuncMap{
+	"qs": func(s string) string { return quizStateRu[s] },
+	"ru": func(ts int64) string {
+		t := time.Unix(ts, 0).In(msk)
+		return ruDays[t.Weekday()] + ", " + t.Format("02.01.2006 15:04")
+	},
 	"tr": func(s string) string {
 		if v, ok := typeRu[s]; ok {
 			return v
@@ -204,6 +246,14 @@ h2{font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)
 .cs{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px}
 .c{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;text-decoration:none;color:inherit;font-size:14px}
 .c .meta b{color:var(--fg)}.c .meta .o{color:var(--over)}
+.lec{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:6px}
+.lec.live{border-color:var(--over);box-shadow:0 0 0 1px var(--over) inset}
+.tag{display:inline-block;font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;margin-right:6px;vertical-align:1px}
+.tag.live{background:var(--over);color:#fff}.tag.upcoming{background:var(--week);color:#fff}.tag.expected{background:transparent;color:var(--week);border:1px dashed var(--week)}.tag.past{background:var(--chip);color:var(--mut)}
+.btn{display:inline-block;padding:6px 12px;border-radius:8px;font-size:13px;text-decoration:none;background:var(--fg);color:var(--bg);white-space:nowrap}.btn.sec{background:var(--chip);color:var(--fg);border:1px solid var(--line)}
+.q{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:6px;display:block;text-decoration:none;color:inherit}
+.qst{font-size:12px;font-weight:600}.qst.in_progress{color:var(--over)}.qst.open,.qst.open_retry{color:var(--week)}.qst.not_open{color:var(--mut)}
+.warn{color:var(--soon);font-size:12.5px;margin-top:6px}
 .empty{color:var(--mut);padding:24px;text-align:center;background:var(--card);border:1px dashed var(--line);border-radius:10px}
 @media (max-width:600px){.stats{grid-template-columns:repeat(2,1fr)}.it{grid-template-columns:4px 1fr}.due{text-align:left;grid-column:2}}
 </style></head><body><div class="w">
@@ -221,6 +271,16 @@ h2{font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)
 <div><div class="nm">{{.Name}}</div><div class="meta">{{.Course}} · {{tr .Type}}{{if .Action}} · {{.Action}}{{end}}</div></div>
 <div class="due">{{.Due}}<small>{{.Rel}}</small></div></a>
 {{end}}</section>{{end}}{{else}}<div class="empty">Открытых дедлайнов нет 🎉</div>{{end}}
+<h2>Лекции{{if .Group}} · {{.Group}}{{end}}</h2>
+{{if .Lect}}{{range .Lect}}<div class="lec {{.Status}}"><div><div class="nm"><span class="tag {{.Status}}">{{if eq .Status "live"}}идёт{{else if eq .Status "upcoming"}}скоро{{else if eq .Status "expected"}}ожидается{{else}}было{{end}}</span>{{.Title}}</div><div class="meta">{{.Course}} · {{.When}}</div></div>
+<div>{{if .Join}}<a class="btn" href="{{.Join}}" target="_blank" rel="noopener">Подключиться</a>{{else if .Record}}<a class="btn sec" href="{{.Record}}" target="_blank" rel="noopener">Запись</a>{{else}}<a class="btn sec" href="{{.Page}}" target="_blank" rel="noopener">Открыть</a>{{end}}</div></div>
+{{end}}{{else}}<div class="empty">Лекций на ближайшую неделю в Moodle пока нет — они обычно появляются незадолго до начала{{if not .Group}}. Задай группу: <code>mirea-moodle-mcp group ИКБО-XX-XX</code>{{end}}</div>{{end}}
+<h2>Тесты</h2>
+{{if .Quiz}}{{range .Quiz}}<a class="q" href="{{.URL}}" target="_blank" rel="noopener"><div class="nm">{{.Name}} <span class="qst {{.State}}">· {{qs .State}}</span></div>
+<div class="meta">{{.Course}}{{if .Close}} · закрывается {{ru .Close}}{{end}}{{range .Info}} · {{.}}{{end}}</div>{{if .Attempts}}<div class="meta">{{range .Attempts}}{{.}}<br>{{end}}</div>{{end}}</a>
+{{end}}{{else}}<div class="empty">Открытых тестов нет</div>{{end}}
+{{if .QuizDone}}<div class="sub">Пройдено тестов: {{.QuizDone}}</div>{{end}}
+{{range .Warn}}<div class="warn">⚠ {{.}}</div>{{end}}
 <h2>Курсы</h2><div class="cs">{{range .Courses}}<a class="c" href="{{.URL}}" target="_blank" rel="noopener"><div class="nm">{{.Name}}</div>
 <div class="meta">{{if .Over}}<span class="o">{{.Over}} просрочено</span> · {{end}}<b>{{.Open}}</b> открыто</div></a>{{end}}</div>
 </div>

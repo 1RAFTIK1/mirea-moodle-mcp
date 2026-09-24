@@ -17,6 +17,7 @@ const usage = `mirea-moodle-mcp — MCP-сервер для online-edu.mirea.ru 
   mirea-moodle-mcp cookie <значение>  обновить сессию (значение cookie MoodleSession)
   mirea-moodle-mcp status             проверить, жива ли сессия
   mirea-moodle-mcp dashboard          открыть дашборд с дедлайнами и курсами
+  mirea-moodle-mcp group ИКБО-50-23   задать группу (фильтр лекций)
   mirea-moodle-mcp install-claude     (пере)подключить сервер к Claude Desktop
   mirea-moodle-mcp version
   mirea-moodle-mcp                    без аргументов — режим MCP (так его запускает Claude)
@@ -27,7 +28,7 @@ const usage = `mirea-moodle-mcp — MCP-сервер для online-edu.mirea.ru 
 func main() {
 	s := newSess(baseURL())
 	if len(os.Args) < 2 {
-		if err := newServer(tools(s)).serve(os.Stdin, os.Stdout); err != nil {
+		if err := newServer(append(tools(s), scheduleTools(s)...)).serve(os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -60,6 +61,15 @@ func main() {
 		}
 		fmt.Println("✓", p)
 		openURL(p)
+	case "group":
+		c := loadCfg()
+		if len(os.Args) > 2 {
+			c.Group = normGroup(os.Args[2])
+			if err := saveCfg(c); err != nil {
+				die(err)
+			}
+		}
+		fmt.Println("группа:", c.Group)
 	case "install-claude":
 		p, err := registerClaude()
 		if err != nil {
@@ -131,7 +141,14 @@ func setup(s *sess) int {
 		}
 	}
 
-	fmt.Println("Шаг 2. Подключение к Claude Desktop.")
+	if g := normGroup(ask("Твоя группа (например ИКБО-50-23, Enter — пропустить): ")); g != "" {
+		c := loadCfg()
+		c.Group = g
+		saveCfg(c)
+		fmt.Println("✓ группа", g)
+	}
+
+	fmt.Println("\nШаг 2. Подключение к Claude Desktop.")
 	if a := strings.ToLower(ask("Добавить сервер в Claude Desktop? [Y/n] ")); a == "" || a == "y" || a == "д" || a == "да" || a == "yes" {
 		p, err := registerClaude()
 		if err != nil {
