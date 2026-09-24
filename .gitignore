@@ -1,0 +1,6 @@
+/mirea-moodle-mcp
+/mirea-moodle-mcp.exe
+/dist/
+session.json
+*.bak-*
+.DS_Store
