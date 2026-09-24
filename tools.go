@@ -432,6 +432,7 @@ func tools(s *sess) []*tool {
 				"files":    obj{"type": "array", "items": obj{"type": "string"}, "description": "абсолютные пути к файлам на этом компьютере"},
 				"text":     str("онлайн-ответ (если в задании есть текстовый ответ)"),
 				"finalize": boolean("отправить на проверку, по умолчанию false"),
+				"dry_run":  boolean("только проверить: загрузить файлы во временную область и НЕ сохранять ответ"),
 			}, "cmid"),
 			Ann: obj{"destructiveHint": true},
 			fn: func(a json.RawMessage) (any, error) {
@@ -440,9 +441,10 @@ func tools(s *sess) []*tool {
 					Files []string `json:"files"`
 					Text  string   `json:"text"`
 					Fin   bool     `json:"finalize"`
+					Dry   bool     `json:"dry_run"`
 				}
 				json.Unmarshal(a, &p)
-				return s.submit(p.CMID, p.Files, p.Text, p.Fin)
+				return s.submit(p.CMID, p.Files, p.Text, p.Fin, p.Dry)
 			},
 		},
 		{
@@ -573,6 +575,8 @@ type fmOpts struct {
 	ClientID string `json:"client_id"`
 	MaxBytes string `json:"maxbytes"`
 	MaxFiles string `json:"maxfiles"`
+	Author   string `json:"author"`
+	License  string `json:"defaultlicense"`
 	Ctx      struct {
 		ID int64 `json:"id"`
 	} `json:"context"`
@@ -580,10 +584,14 @@ type fmOpts struct {
 		Name string `json:"filename"`
 		Path string `json:"filepath"`
 	} `json:"list"`
-	Repos map[string]struct {
-		ID   string `json:"id"`
-		Type string `json:"type"`
-	} `json:"repositories"`
+	FP struct {
+		Author  string `json:"author"`
+		License string `json:"defaultlicense"`
+		Repos   map[string]struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+		} `json:"repositories"`
+	} `json:"filepicker"`
 }
 
 func formValues(body string) (string, url.Values, string) {
@@ -604,7 +612,7 @@ func formValues(body string) (string, url.Values, string) {
 	return act, v, m[1]
 }
 
-func (s *sess) submit(cmid int64, files []string, text string, fin bool) (any, error) {
+func (s *sess) submit(cmid int64, files []string, text string, fin, dry bool) (any, error) {
 	res := obj{}
 	view := fmt.Sprintf("%s/mod/assign/view.php?id=%d", s.base, cmid)
 	if len(files) > 0 || text != "" {
@@ -636,13 +644,33 @@ func (s *sess) submit(cmid int64, files []string, text string, fin bool) (any, e
 				}
 			}
 			repo := ""
-			for _, r := range fo.Repos {
+			for _, r := range fo.FP.Repos {
 				if r.Type == "upload" {
 					repo = r.ID
 				}
 			}
 			if repo == "" {
 				return nil, errors.New("на сайте нет репозитория загрузки файлов")
+			}
+			for _, f := range files {
+				st, err := os.Stat(expand(f))
+				if err != nil {
+					return nil, err
+				}
+				var mb int64
+				fmt.Sscan(fo.MaxBytes, &mb)
+				if mb > 0 && st.Size() > mb {
+					return nil, fmt.Errorf("%s: %s больше лимита %s", filepath.Base(f), hsize(st.Size()), hsize(mb))
+				}
+			}
+			if dry {
+				for _, f := range files {
+					if err := s.upload(expand(f), repo, fo, v.Get("sesskey")); err != nil {
+						return nil, fmt.Errorf("%s: %w", filepath.Base(f), err)
+					}
+				}
+				return obj{"dry_run": true, "uploaded_to_temp_draft": len(files), "saved": false,
+					"note": "файлы приняты сервером во временную область; ответ НЕ сохранён, в задании ничего не изменилось"}, nil
 			}
 			// clear current draft files
 			for _, f := range fo.List {
@@ -736,7 +764,7 @@ func (s *sess) upload(path, repo string, fo fmOpts, key string) error {
 		return err
 	}
 	for k, val := range map[string]string{
-		"title": filepath.Base(path), "author": "", "license": "unknown",
+		"title": filepath.Base(path), "author": first(fo.Author, fo.FP.Author), "license": first(fo.License, fo.FP.License, "allrightsreserved"),
 		"itemid": fmt.Sprint(fo.ItemID), "repo_id": repo, "p": "", "page": "",
 		"env": "filemanager", "sesskey": key, "client_id": fo.ClientID,
 		"maxbytes": fo.MaxBytes, "areamaxbytes": "-1", "ctx_id": fmt.Sprint(fo.Ctx.ID), "savepath": "/",
@@ -768,4 +796,13 @@ func (s *sess) upload(path, repo string, fo fmOpts, key string) error {
 		return fmt.Errorf("неожиданный ответ загрузки: %s", trunc(string(b), 200))
 	}
 	return nil
+}
+
+func first(v ...string) string {
+	for _, x := range v {
+		if x != "" {
+			return x
+		}
+	}
+	return ""
 }

@@ -169,7 +169,7 @@ func buildDashboard(s *sess) (string, error) {
 	return p, dashTpl.Execute(f, d)
 }
 
-var typeRu = map[string]string{"assign": "задание", "quiz": "тест", "forum": "форум", "workshop": "семинар", "lesson": "лекция", "feedback": "опрос"}
+var typeRu = map[string]string{"assign": "задание", "quiz": "тест", "forum": "форум", "workshop": "семинар", "lesson": "лекция", "feedback": "опрос", "choice": "опрос", "scorm": "курс", "h5pactivity": "интерактив"}
 
 var dashTpl = template.Must(template.New("d").Funcs(template.FuncMap{
 	"tr": func(s string) string {
