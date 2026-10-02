@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
 
 var version = "dev" // set by -ldflags at release build
@@ -16,13 +17,15 @@ const usage = `mirea-moodle-mcp — MCP-сервер для online-edu.mirea.ru 
   mirea-moodle-mcp setup              первая настройка: сессия + подключение к Claude Desktop
   mirea-moodle-mcp cookie <значение>  обновить сессию (значение cookie MoodleSession)
   mirea-moodle-mcp status             проверить, жива ли сессия
+  mirea-moodle-mcp doctor             диагностика: сеть до online-edu, сессия, группа, папки, клиенты
   mirea-moodle-mcp dashboard          открыть дашборд с дедлайнами и курсами
   mirea-moodle-mcp group ИКБО-50-23   задать группу (фильтр лекций)
   mirea-moodle-mcp clients            список поддерживаемых агентов/IDE и какие найдены
   mirea-moodle-mcp install <id|detected>  подключить к клиенту (claude-desktop, claude-code, cursor,
                                       vscode, cline, windsurf, gemini, codex, lmstudio, zed)
   mirea-moodle-mcp config <id>        фрагмент конфига для ручной вставки
-  mirea-moodle-mcp http [--addr 127.0.0.1:8787] [--allow-origin URL] [--no-auth]
+  mirea-moodle-mcp roots [add|rm <папка>]  папки, из которых можно сдавать и куда скачивать
+  mirea-moodle-mcp http [--addr 127.0.0.1:8787] [--allow-origin URL] [--no-auth] [--allow-submit]
                                       MCP по HTTP для ChatGPT, claude.ai и др. удалённых клиентов
   mirea-moodle-mcp version
   mirea-moodle-mcp                    без аргументов — режим MCP (так его запускает Claude)
@@ -33,6 +36,7 @@ const usage = `mirea-moodle-mcp — MCP-сервер для online-edu.mirea.ru 
 func main() {
 	s := newSess(baseURL())
 	if len(os.Args) < 2 {
+		go s.keepalive(10 * time.Minute)
 		if err := newServer(append(tools(s), scheduleTools(s)...)).serve(os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -87,6 +91,12 @@ func main() {
 		if err := cmdInstall(a); err != nil {
 			die(err)
 		}
+	case "doctor":
+		os.Exit(doctor(s))
+	case "roots":
+		if err := cmdRoots(os.Args[2:]); err != nil {
+			die(err)
+		}
 	case "clients":
 		cmdClients()
 	case "config":
@@ -113,8 +123,12 @@ func main() {
 				}
 			case "--no-auth":
 				noAuth = true
+			case "--allow-submit":
+				allowSubmit = true
 			}
 		}
+		remoteMode = true
+		go s.keepalive(10 * time.Minute)
 		if err := serveHTTP(newServer(append(tools(s), scheduleTools(s)...)), addr, noAuth, origins); err != nil {
 			die(err)
 		}

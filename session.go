@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -28,6 +30,7 @@ type sess struct {
 	mu   sync.Mutex
 	key  string // sesskey
 	uid  int64
+	mod  time.Time // mtime of session.json we loaded
 }
 
 type saved struct {
@@ -49,25 +52,30 @@ var (
 
 func newSess(base string) *sess {
 	jar, _ := cookiejar.New(nil)
-	s := &sess{base: base, jar: jar, hc: &http.Client{Jar: jar, Timeout: 120 * time.Second}}
+	s := &sess{base: base, jar: jar, hc: newHTTP(jar)}
 	s.load()
 	return s
 }
 
 func (s *sess) setJar(cookie string) {
 	u, _ := url.Parse(s.base)
-	s.jar, _ = cookiejar.New(nil)
-	s.hc.Jar = s.jar
-	if cookie != "" {
-		s.jar.SetCookies(u, []*http.Cookie{{Name: "MoodleSession", Value: cookie, Path: "/"}})
+	c := &http.Cookie{Name: "MoodleSession", Value: cookie, Path: "/"}
+	if cookie == "" {
+		c.MaxAge = -1
 	}
+	s.jar.SetCookies(u, []*http.Cookie{c}) // jar is concurrency-safe; same name+path replaces
 }
 
 func (s *sess) load() {
+	st, err := os.Stat(sessPath())
+	if err != nil {
+		return
+	}
 	b, err := os.ReadFile(sessPath())
 	if err != nil {
 		return
 	}
+	s.mod = st.ModTime()
 	var v saved
 	if json.Unmarshal(b, &v) != nil {
 		return
@@ -114,7 +122,8 @@ func (s *sess) setCookie(v string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.setJar(v)
-	rs, err := s.hc.Get(s.base + "/my/")
+	rq, _ := http.NewRequest("GET", s.base+"/my/", nil)
+	rs, err := s.do(rq, 60*time.Second, 60*time.Second)
 	if err != nil {
 		return "", err
 	}
@@ -135,13 +144,20 @@ func (s *sess) setCookie(v string) (string, error) {
 	if m := reFull.FindStringSubmatch(page); m != nil {
 		name = strip(m[1])
 	}
-	return name, s.save()
+	if err := s.save(); err != nil {
+		return name, err
+	}
+	if st, err := os.Stat(sessPath()); err == nil {
+		s.mod = st.ModTime()
+	}
+	return name, nil
 }
 
 var errRelogin = errors.New("relogin")
 
 // call runs one function through lib/ajax/service.php.
 func (s *sess) call(fn string, args any, out any) error {
+	s.refresh()
 	s.mu.Lock()
 	key := s.key
 	s.mu.Unlock()
@@ -153,7 +169,9 @@ func (s *sess) call(fn string, args any, out any) error {
 	}
 	body, _ := json.Marshal([]obj{{"index": 0, "methodname": fn, "args": args}})
 	u := fmt.Sprintf("%s/lib/ajax/service.php?sesskey=%s&info=%s", s.base, url.QueryEscape(key), fn)
-	rs, err := s.hc.Post(u, "application/json", bytes.NewReader(body))
+	rq, _ := http.NewRequest("POST", u, bytes.NewReader(body))
+	rq.Header.Set("Content-Type", "application/json")
+	rs, err := s.do(rq, 60*time.Second, 60*time.Second)
 	if err != nil {
 		return fmt.Errorf("%s: %w", fn, err)
 	}
@@ -199,4 +217,76 @@ func (s *sess) call(fn string, args any, out any) error {
 		return nil
 	}
 	return json.Unmarshal(rr[0].Data, out)
+}
+
+// newHTTP: timeouts per phase instead of http.Client.Timeout, which would also
+// cap reading the body and kill large downloads/uploads on slow links.
+func newHTTP(jar http.CookieJar) *http.Client {
+	return &http.Client{Jar: jar, Transport: &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 90 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConnsPerHost:   8,
+		ForceAttemptHTTP2:     true,
+	}}
+}
+
+// idleBody cancels the request if the body stalls for longer than d.
+type idleBody struct {
+	io.ReadCloser
+	t      *time.Timer
+	d      time.Duration
+	cancel context.CancelFunc
+}
+
+func (b *idleBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	b.t.Reset(b.d)
+	return n, err
+}
+
+func (b *idleBody) Close() error {
+	b.t.Stop()
+	b.cancel()
+	return b.ReadCloser.Close()
+}
+
+// do sends rq; whole call bounded by total (if >0), body reads by idle timeout.
+func (s *sess) do(rq *http.Request, total, idle time.Duration) (*http.Response, error) {
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if total > 0 {
+		ctx, cancel = context.WithTimeout(rq.Context(), total)
+	} else {
+		ctx, cancel = context.WithCancel(rq.Context())
+	}
+	rs, err := s.hc.Do(rq.WithContext(ctx))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	rs.Body = &idleBody{ReadCloser: rs.Body, t: time.AfterFunc(idle, cancel), d: idle, cancel: cancel}
+	return rs, nil
+}
+
+func (s *sess) postForm(u string, v url.Values) (*http.Response, error) {
+	rq, _ := http.NewRequest("POST", u, strings.NewReader(v.Encode()))
+	rq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return s.do(rq, 90*time.Second, 60*time.Second)
+}
+
+// refresh reloads session.json if `mirea-moodle-mcp cookie` changed it while
+// this server process was running (so the agent needs no restart).
+func (s *sess) refresh() {
+	st, err := os.Stat(sessPath())
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if st.ModTime().After(s.mod) {
+		s.load()
+	}
 }

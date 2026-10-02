@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -21,7 +22,8 @@ import (
 // ---- user config (group) ----
 
 type config struct {
-	Group string `json:"group"`
+	Group string   `json:"group"`
+	Roots []string `json:"roots,omitempty"`
 }
 
 func cfgPath() string { return filepath.Join(cfgDir(), "config.json") }
@@ -106,8 +108,8 @@ func (s *sess) modules(cid int64, mods ...string) ([]cmRef, error) {
 	var out []cmRef
 	var firstErr error
 	par(len(cs), 4, func(i int) {
-		var raw string
-		if err := s.call("core_courseformat_get_state", obj{"courseid": cs[i].ID}, &raw); err != nil {
+		raw, err := s.courseState(cs[i].ID)
+		if err != nil {
 			mu.Lock()
 			if firstErr == nil {
 				firstErr = err
@@ -162,7 +164,7 @@ func par(n, k int, f func(int)) {
 }
 
 func (s *sess) postHTML(path string, v url.Values) (string, error) {
-	rs, err := s.hc.PostForm(s.abs(path), v)
+	rs, err := s.postForm(s.abs(path), v)
 	if err != nil {
 		return "", err
 	}
@@ -215,6 +217,20 @@ func parseRuDate(s string) int64 {
 }
 
 func (s *sess) quizInfo(c cmRef) quiz {
+	q, _ := cached("quiz:"+c.URL, 5*time.Minute, func() (quiz, error) {
+		q := s.quizInfoNow(c)
+		if strings.HasPrefix(q.State, "error") {
+			return q, errors.New(q.State)
+		}
+		return q, nil
+	})
+	if q.URL == "" {
+		return s.quizInfoNow(c)
+	}
+	return q
+}
+
+func (s *sess) quizInfoNow(c cmRef) quiz {
 	q := quiz{Course: c.Course, Name: c.Name, URL: c.URL, State: "open"}
 	b, _, err := s.getHTML(c.URL)
 	if err != nil {
@@ -364,9 +380,20 @@ var (
 func atoi(s string) int { n, _ := strconv.Atoi(s); return n }
 
 func (s *sess) webinarsOf(c cmRef, g string) []webinar {
+	ws, _ := cached("web:"+c.URL+"|"+g, 5*time.Minute, func() ([]webinar, error) {
+		ws, ok := s.webinarsOfNow(c, g)
+		if !ok {
+			return nil, errors.New("fetch failed")
+		}
+		return ws, nil
+	})
+	return ws
+}
+
+func (s *sess) webinarsOfNow(c cmRef, g string) ([]webinar, bool) {
 	b, _, err := s.getHTML(c.URL)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	var rows []webinar
 	add := func(w webinar) {
@@ -386,7 +413,7 @@ func (s *sess) webinarsOf(c cmRef, g string) []webinar {
 	if m := reNewID.FindStringSubmatch(b); m != nil {
 		t, err := s.postHTML(dirOf(c.URL)+"pages/new/studentTable_new.php", url.Values{"idelement": {m[1]}})
 		if err != nil {
-			return nil
+			return nil, false
 		}
 		for i, r := range reTR.FindAllStringSubmatch(t, -1) {
 			if i == 0 {
@@ -410,7 +437,7 @@ func (s *sess) webinarsOf(c cmRef, g string) []webinar {
 	} else if m := reLegacyID.FindStringSubmatch(b); m != nil {
 		t, err := s.postHTML(dirOf(c.URL)+"pages/legacy/studentTable.php", url.Values{"idelement": {m[1]}})
 		if err != nil {
-			return nil
+			return nil, false
 		}
 		for i, r := range reTR.FindAllStringSubmatch(t, -1) {
 			if i == 0 {
@@ -435,7 +462,7 @@ func (s *sess) webinarsOf(c cmRef, g string) []webinar {
 			add(w)
 		}
 	}
-	return rows
+	return rows, true
 }
 
 func dirOf(u string) string { return u[:strings.LastIndex(u, "/")+1] }
@@ -634,4 +661,13 @@ func predict(all []webinar, now time.Time) []webinar {
 		out = append(out, w)
 	}
 	return out
+}
+
+// courseState: structure of a course (sections, modules), cached 10 min.
+func (s *sess) courseState(cid int64) (string, error) {
+	return cached(fmt.Sprint("state:", cid), 10*time.Minute, func() (string, error) {
+		var raw string
+		err := s.call("core_courseformat_get_state", obj{"courseid": cid}, &raw)
+		return raw, err
+	})
 }

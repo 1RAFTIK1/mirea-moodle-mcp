@@ -86,22 +86,8 @@ func dashData(s *sess) (*dData, error) {
 		return nil, err
 	}
 	now := time.Now().In(msk)
-	var ev struct {
-		Events []struct {
-			Name   string `json:"name"`
-			Mod    string `json:"modulename"`
-			TS     int64  `json:"timesort"`
-			URL    string `json:"url"`
-			Course struct {
-				ID   int64  `json:"id"`
-				Name string `json:"fullname"`
-			} `json:"course"`
-			Act *struct {
-				Name string `json:"name"`
-			} `json:"action"`
-		} `json:"events"`
-	}
-	if err := s.call("core_calendar_get_action_events_by_timesort", obj{"timesortfrom": now.Add(-30 * 24 * time.Hour).Unix(), "timesortto": now.Add(60 * 24 * time.Hour).Unix(), "limitnum": 50}, &ev); err != nil {
+	evs, err := s.actionEvents(now.Add(-30*24*time.Hour).Unix(), now.Add(60*24*time.Hour).Unix())
+	if err != nil {
 		return nil, err
 	}
 	d := &dData{Now: now.Format("02.01.2006 15:04")}
@@ -112,7 +98,7 @@ func dashData(s *sess) (*dData, error) {
 		order = append(order, c.ID)
 	}
 	g := map[string][]dItem{}
-	for _, e := range ev.Events {
+	for _, e := range evs {
 		t := time.Unix(e.TS, 0).In(msk)
 		dl := t.Sub(now)
 		u := "later"

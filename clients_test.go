@@ -15,8 +15,10 @@ import (
 func fakeHome(t *testing.T) string {
 	h := t.TempDir()
 	t.Setenv("HOME", h)
+	t.Setenv("USERPROFILE", h) // os.UserHomeDir on Windows
 	t.Setenv("APPDATA", filepath.Join(h, "AppData"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(h, ".config"))
+	t.Setenv("LOCALAPPDATA", filepath.Join(h, "AppData", "Local"))
 	t.Setenv("PATH", "") // no client CLIs → file path is used
 	return h
 }

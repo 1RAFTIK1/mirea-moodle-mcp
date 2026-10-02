@@ -19,6 +19,15 @@ mkdir -p "$DIR"
 url="https://github.com/$REPO/releases/latest/download/${BIN}-${os}-${arch}"
 echo "→ Скачиваю $url"
 if curl -fL --progress-bar -o "$DIR/$BIN.tmp" "$url"; then
+  # verify against SHA256SUMS from the same release
+  sums=$(curl -fsSL "https://github.com/$REPO/releases/latest/download/SHA256SUMS" || true)
+  want=$(printf '%s\n' "$sums" | awk -v f="${BIN}-${os}-${arch}" '$2==f || $2=="*"f {print $1}')
+  if command -v sha256sum >/dev/null 2>&1; then got=$(sha256sum "$DIR/$BIN.tmp" | cut -d' ' -f1)
+  else got=$(shasum -a 256 "$DIR/$BIN.tmp" | cut -d' ' -f1); fi
+  if [ -z "$want" ] || [ "$want" != "$got" ]; then
+    rm -f "$DIR/$BIN.tmp"; echo "✗ Контрольная сумма не совпала (ожидалась ${want:-нет в SHA256SUMS}, получена $got). Установка прервана."; exit 1
+  fi
+  echo "✓ SHA-256 совпадает"
   mv "$DIR/$BIN.tmp" "$DIR/$BIN"
 elif command -v go >/dev/null 2>&1; then
   rm -f "$DIR/$BIN.tmp"
