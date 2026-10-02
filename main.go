@@ -18,7 +18,12 @@ const usage = `mirea-moodle-mcp — MCP-сервер для online-edu.mirea.ru 
   mirea-moodle-mcp status             проверить, жива ли сессия
   mirea-moodle-mcp dashboard          открыть дашборд с дедлайнами и курсами
   mirea-moodle-mcp group ИКБО-50-23   задать группу (фильтр лекций)
-  mirea-moodle-mcp install-claude     (пере)подключить сервер к Claude Desktop
+  mirea-moodle-mcp clients            список поддерживаемых агентов/IDE и какие найдены
+  mirea-moodle-mcp install <id|detected>  подключить к клиенту (claude-desktop, claude-code, cursor,
+                                      vscode, cline, windsurf, gemini, codex, lmstudio, zed)
+  mirea-moodle-mcp config <id>        фрагмент конфига для ручной вставки
+  mirea-moodle-mcp http [--addr 127.0.0.1:8787] [--allow-origin URL] [--no-auth]
+                                      MCP по HTTP для ChatGPT, claude.ai и др. удалённых клиентов
   mirea-moodle-mcp version
   mirea-moodle-mcp                    без аргументов — режим MCP (так его запускает Claude)
 
@@ -71,11 +76,48 @@ func main() {
 		}
 		fmt.Println("группа:", c.Group)
 	case "install-claude":
-		p, err := registerClaude()
-		if err != nil {
+		if err := cmdInstall("claude-desktop"); err != nil {
 			die(err)
 		}
-		fmt.Println("✓ добавлено в", p, "— перезапусти Claude Desktop")
+	case "install":
+		a := ""
+		if len(os.Args) > 2 {
+			a = os.Args[2]
+		}
+		if err := cmdInstall(a); err != nil {
+			die(err)
+		}
+	case "clients":
+		cmdClients()
+	case "config":
+		a := ""
+		if len(os.Args) > 2 {
+			a = os.Args[2]
+		}
+		if err := cmdConfig(a); err != nil {
+			die(err)
+		}
+	case "http":
+		addr, noAuth, origins := "127.0.0.1:8787", false, []string{}
+		for i := 2; i < len(os.Args); i++ {
+			switch os.Args[i] {
+			case "--addr":
+				i++
+				if i < len(os.Args) {
+					addr = os.Args[i]
+				}
+			case "--allow-origin":
+				i++
+				if i < len(os.Args) {
+					origins = append(origins, os.Args[i])
+				}
+			case "--no-auth":
+				noAuth = true
+			}
+		}
+		if err := serveHTTP(newServer(append(tools(s), scheduleTools(s)...)), addr, noAuth, origins); err != nil {
+			die(err)
+		}
 	case "version", "-v", "--version":
 		fmt.Println(version)
 	case "help", "-h", "--help":
@@ -148,14 +190,18 @@ func setup(s *sess) int {
 		fmt.Println("✓ группа", g)
 	}
 
-	fmt.Println("\nШаг 2. Подключение к Claude Desktop.")
-	if a := strings.ToLower(ask("Добавить сервер в Claude Desktop? [Y/n] ")); a == "" || a == "y" || a == "д" || a == "да" || a == "yes" {
-		p, err := registerClaude()
-		if err != nil {
+	fmt.Println("\nШаг 2. Подключение к агентам.")
+	var found []string
+	for _, c := range clients {
+		if c.detect() {
+			found = append(found, c.Name)
+		}
+	}
+	if len(found) == 0 {
+		fmt.Println("Не нашёл установленных клиентов MCP. Позже: mirea-moodle-mcp clients / install <id>")
+	} else if a := strings.ToLower(ask("Подключить к: " + strings.Join(found, ", ") + "? [Y/n] ")); a == "" || a == "y" || a == "д" || a == "да" || a == "yes" {
+		if err := cmdInstall("detected"); err != nil {
 			fmt.Println("✗", err)
-			fmt.Println("  Можно добавить вручную — см. README, раздел «Ручное подключение».")
-		} else {
-			fmt.Println("✓ добавлено в", p)
 		}
 	}
 
@@ -168,7 +214,7 @@ func setup(s *sess) int {
 	}
 
 	fmt.Print(`
-Готово. Перезапусти Claude Desktop (полностью: Quit и открыть заново) и спроси, например:
+Готово. Перезапусти подключённые приложения (Claude Desktop — полностью, через Quit) и спроси, например:
   «какие у меня дедлайны на этой неделе?»
 
 Когда сессия истечёт (Claude скажет об этом), снова войди в браузере и выполни:

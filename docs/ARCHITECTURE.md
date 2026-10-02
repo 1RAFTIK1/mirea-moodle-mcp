@@ -87,8 +87,10 @@
 | `session.go` | доступ к Moodle | cookie-сессия, `sesskey`, вызов `lib/ajax/service.php`, сохранение на диск |
 | `tools.go` | предметная логика | 10 инструментов, парсинг HTML, загрузка файлов, сдача |
 | `dashboard.go` | UI | HTML-дашборд через `html/template` |
-| `claude.go` | интеграция | запись в `claude_desktop_config.json` |
-| `main.go` | CLI | `setup`, `cookie`, `status`, `dashboard`, `install-claude`, режим сервера |
+| `clients.go` | интеграция | регистрация в 10 клиентах MCP: JSON (`mcpServers` / `servers` / `context_servers`), TOML Codex, CLI клиентов |
+| `http.go` | транспорт | Streamable HTTP для удалённых клиентов (ChatGPT, claude.ai) |
+| `schedule.go` | предметная логика | трекер тестов, расписание лекций MTS Link |
+| `main.go` | CLI | `setup`, `cookie`, `status`, `dashboard`, `clients`, `install`, `config`, `http`, режим сервера |
 | `util.go` | утилиты | HTML→текст, время МСК, пути |
 
 Внешних зависимостей **нет** — только стандартная библиотека Go. Это осознанно: бинарник собирается под 6 платформ одной командой, нет supply-chain-рисков, нечего обновлять.
@@ -277,8 +279,8 @@ ctx_id=1143299  savepath=/  maxbytes=20971520  areamaxbytes=-1
 ## 8. Дашборд, setup, установка
 
 - **Дашборд** (`dashboard.go`): две AJAX-функции → группировка по срочности (просрочено / 48 ч / неделя / позже) → `html/template` (автоэкранирование, XSS из названий заданий не пройдёт) → один самодостаточный HTML-файл без внешних ресурсов, светлая/тёмная тема через `prefers-color-scheme`, фильтр по курсам на 10 строках JS.
-- **`setup`**: инструкция → ввод cookie с проверкой (3 попытки) → `registerClaude()` → дашборд.
-- **`registerClaude()`**: читает `claude_desktop_config.json`, делает бэкап `.bak-<время>`, добавляет/обновляет только ключ `mcpServers.mirea-moodle`, остальные серверы не трогает. Путь к бинарнику — `os.Executable()` + `EvalSymlinks`, чтобы работало после `go install` и через симлинки.
+- **`setup`**: инструкция → ввод cookie с проверкой (3 попытки) → группа → поиск установленных клиентов и `install detected` → дашборд.
+- **`install()`** (`clients.go`): если у клиента есть своя CLI (`claude mcp add`, `codex mcp add`, `code --add-mcp`) — использует её; иначе читает его конфиг, делает бэкап `.bak-<время>`, добавляет/обновляет только запись `mirea-moodle`, остальное не трогает. Конфиги с комментариями (JSONC) не переписывает — печатает фрагмент для ручной вставки. Подробно — [CLIENTS.md](CLIENTS.md). Путь к бинарнику — `os.Executable()` + `EvalSymlinks`, чтобы работало после `go install` и через симлинки.
 - **Установка**: `install.sh` определяет ОС/архитектуру, качает бинарник из GitHub Releases (`releases/latest/download/<имя>` — стабильный URL на последний релиз), fallback на `go install`, запускает `setup < /dev/tty` — потому что при `curl | sh` stdin занят скриптом.
 - **Релиз**: `release.sh` — кросс-компиляция `CGO_ENABLED=0` под 6 платформ, `-ldflags "-X main.version=…"` для версии, `gh release create`.
 

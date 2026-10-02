@@ -1,6 +1,6 @@
 # mirea-moodle-mcp
 
-MCP-сервер, который подключает **Claude Desktop** к СДО РТУ МИРЭА ([online-edu.mirea.ru](https://online-edu.mirea.ru)).
+MCP-сервер, который подключает ИИ-агентов к СДО РТУ МИРЭА ([online-edu.mirea.ru](https://online-edu.mirea.ru)): **Claude Desktop, Claude Code, Cursor, VS Code (Copilot), Cline, Windsurf, Gemini CLI, Codex CLI, LM Studio, Zed**. Есть HTTP-режим для **ChatGPT** и **claude.ai** ([подробно](docs/CLIENTS.md)).
 После установки можно просто спросить Claude:
 
 - «какие у меня дедлайны на этой неделе?»
@@ -16,7 +16,7 @@ MCP-сервер, который подключает **Claude Desktop** к СД
 
 ## Установка (≈ 3 минуты)
 
-Нужен установленный [Claude Desktop](https://claude.ai/download).
+Нужен любой клиент с поддержкой MCP — например [Claude Desktop](https://claude.ai/download), Cursor, VS Code или Gemini CLI.
 
 ### macOS / Linux
 
@@ -37,10 +37,10 @@ irm https://raw.githubusercontent.com/1RAFTIK1/mirea-moodle-mcp/main/install.ps1
 Установщик скачает программу и запустит настройку `setup`. Она проведёт по трём шагам:
 
 1. **Сессия Moodle** — нужно один раз скопировать cookie из браузера (подробно — ниже).
-2. **Подключение к Claude Desktop** — программа сама допишет себя в `claude_desktop_config.json` (старый конфиг сохранится рядом как `.bak-…`).
+2. **Подключение к агентам** — программа найдёт установленные клиенты (Claude, Cursor, VS Code, Gemini CLI, Codex…) и пропишет себя в их конфиги. Старые конфиги сохранятся рядом как `.bak-…`.
 3. **Дашборд** — откроется страница с твоими дедлайнами.
 
-После этого **полностью перезапусти Claude Desktop** (Quit, не просто закрыть окно) — в списке инструментов появится `mirea-moodle`.
+После этого **перезапусти подключённые приложения** (Claude Desktop — полностью, через Quit) — в списке инструментов появится `mirea-moodle`.
 
 ---
 
@@ -70,7 +70,7 @@ Moodle завершает сессию через несколько часов 
 mirea-moodle-mcp cookie <новое значение MoodleSession>
 ```
 
-Claude Desktop перезапускать не нужно.
+Перезапускать агента не нужно.
 
 > Если выйти из аккаунта в браузере кнопкой «Выход», сессия умрёт и у сервера. Просто закрой вкладку.
 
@@ -85,9 +85,12 @@ Claude Desktop перезапускать не нужно.
 | `mirea-moodle-mcp status` | проверить, жива ли сессия |
 | `mirea-moodle-mcp dashboard` | собрать и открыть дашборд |
 | `mirea-moodle-mcp group ИКБО-50-23` | задать группу (фильтр лекций) |
-| `mirea-moodle-mcp install-claude` | заново прописать сервер в Claude Desktop |
+| `mirea-moodle-mcp clients` | какие агенты/IDE поддерживаются и какие найдены |
+| `mirea-moodle-mcp install <id\|detected>` | подключить к клиенту (`claude-desktop`, `claude-code`, `cursor`, `vscode`, `cline`, `windsurf`, `gemini`, `codex`, `lmstudio`, `zed`) |
+| `mirea-moodle-mcp config <id>` | фрагмент конфига для ручной вставки |
+| `mirea-moodle-mcp http` | MCP по HTTP для ChatGPT, claude.ai и других удалённых клиентов |
 
-## Инструменты для Claude
+## Инструменты
 
 | tool | что делает |
 |---|---|
@@ -107,23 +110,9 @@ Claude Desktop перезапускать не нужно.
 
 ---
 
-## Ручное подключение к Claude Desktop
+## Ручное подключение
 
-Если `install-claude` не справился, открой конфиг:
-
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-- Linux: `~/.config/Claude/claude_desktop_config.json`
-
-и добавь (путь — к скачанной программе):
-
-```json
-{
-  "mcpServers": {
-    "mirea-moodle": { "command": "/Users/ИМЯ/.local/bin/mirea-moodle-mcp" }
-  }
-}
-```
+`mirea-moodle-mcp config <id>` выведет готовый фрагмент и путь к файлу. Форматы всех клиентов, особенности (Gemini CLI и «доверенные папки», VS Code и режим Agent) и подключение ChatGPT / claude.ai через HTTP — в [docs/CLIENTS.md](docs/CLIENTS.md).
 
 ## Где что лежит
 
@@ -140,7 +129,8 @@ Claude Desktop перезапускать не нужно.
 | `Moodle не принял эту сессию` | скопировано не то значение или не с того сайта; проверь, что открыт именно online-edu.mirea.ru и ты залогинен(а) |
 | `сессия истекла` | `mirea-moodle-mcp cookie <новое значение>` |
 | таймаут при подключении | сайт МИРЭА режет часть зарубежных IP — если включён VPN, добавь `*.mirea.ru` в исключения |
-| в Claude нет инструментов | полностью перезапусти Claude Desktop; проверь конфиг (раздел выше) |
+| у агента нет инструментов | перезапусти клиент; `mirea-moodle-mcp clients` и `config <id>`; см. [docs/CLIENTS.md](docs/CLIENTS.md) |
+| Gemini CLI: сервер `Disabled` | папка не доверенная — выполни в ней `/permissions trust` |
 | macOS: «не удаётся проверить разработчика» | `xattr -d com.apple.quarantine ~/.local/bin/mirea-moodle-mcp` (бывает, если скачал бинарник браузером) |
 
 ## Сборка из исходников
@@ -153,6 +143,7 @@ go install github.com/1RAFTIK1/mirea-moodle-mcp@latest   # Go ≥ 1.22, без �
 
 ## Документация
 
+- [Подключение к агентам и IDE](docs/CLIENTS.md) — все поддерживаемые клиенты, форматы конфигов, HTTP-режим для ChatGPT/claude.ai
 - [Как устроен сервер](docs/ARCHITECTURE.md) — протокол MCP, сессия Moodle, разбор сдачи задания по HTTP-запросам, безопасность
 - [Как написать свой MCP-сервер](docs/WRITE-YOUR-OWN-MCP.md) — минимальный сервер на 80 строк ([пример](examples/minimal-mcp/main.go)), проектирование инструментов, отладка, распространение
 
