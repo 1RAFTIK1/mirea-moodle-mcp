@@ -35,7 +35,11 @@ type dData struct {
 	Quiz                      []quiz
 	QuizDone                  int
 	Warn                      []string
+	News                      []dNews
+	Unread                    int
 }
+
+type dNews struct{ When, Kind, Subject, URL string }
 
 type dGroup struct {
 	Title, Key string
@@ -148,7 +152,24 @@ func dashData(s *sess) (*dData, error) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	warn := func(m string) { mu.Lock(); d.Warn = append(d.Warn, m); mu.Unlock() }
-	wg.Add(2)
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		ns, unread, err := s.notifications(30)
+		if err != nil {
+			warn("уведомления: " + err.Error())
+			return
+		}
+		d.Unread = unread
+		for _, n := range ns {
+			if n.Read || len(d.News) >= 8 {
+				continue
+			}
+			o := notifObj(n)
+			u, _ := o["url"].(string)
+			d.News = append(d.News, dNews{When: strings.TrimPrefix(rel(time.Unix(n.Time, 0).Sub(now)), "просрочено на ") + " назад", Kind: o["kind"].(string), Subject: n.Subject, URL: u})
+		}
+	}()
 	go func() {
 		defer wg.Done()
 		if ws, err := s.webinars(0, normGroup(d.Group), 3*24*time.Hour, 7*24*time.Hour); err == nil {
@@ -252,6 +273,9 @@ h2{font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)
 <div class="st"><b>{{.NAll}}</b><span>всего открыто</span></div>
 </div>
 <div class="chips" id="chips"><button class="chip on" data-c="">Все курсы</button>{{range .Courses}}{{if or .Open .Over}}<button class="chip" data-c="{{.ID}}">{{.Name}}</button>{{end}}{{end}}</div>
+{{if .News}}<h2>Новое в Moodle · непрочитано {{.Unread}}</h2>
+{{range .News}}<a class="q" href="{{if .URL}}{{.URL}}{{else}}https://online-edu.mirea.ru/message/output/popup/notifications.php{{end}}" target="_blank" rel="noopener"><div class="nm">{{.Subject}}</div><div class="meta">{{.Kind}} · {{.When}}</div></a>
+{{end}}{{end}}
 {{if .Groups}}{{range .Groups}}<section class="g"><h2>{{.Title}}</h2>
 {{range .Items}}<a class="it {{.Urg}}" data-c="{{.CID}}" href="{{.URL}}" target="_blank" rel="noopener"><div class="bar"></div>
 <div><div class="nm">{{.Name}}</div><div class="meta">{{.Course}} · {{tr .Type}}{{if .Action}} · {{.Action}}{{end}}</div></div>

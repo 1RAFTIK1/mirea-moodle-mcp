@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -136,8 +137,13 @@ func (s *server) dispatch(q rpcReq) (any, *rpcErr) {
 		if str, ok := out.(string); ok {
 			txt = str
 		} else {
-			b, _ := json.MarshalIndent(out, "", " ")
-			txt = string(b)
+			// no HTML escaping: agents copy URLs with & from here
+			var b strings.Builder
+			enc := json.NewEncoder(&b)
+			enc.SetEscapeHTML(false)
+			enc.SetIndent("", " ")
+			enc.Encode(out)
+			txt = strings.TrimRight(b.String(), "\n")
 		}
 		return textRes(txt, false), nil
 	case "resources/list":

@@ -19,6 +19,8 @@ const usage = `mirea-moodle-mcp — MCP-сервер для online-edu.mirea.ru 
   mirea-moodle-mcp status             проверить, жива ли сессия
   mirea-moodle-mcp doctor             диагностика: сеть до online-edu, сессия, группа, папки, клиенты
   mirea-moodle-mcp dashboard          открыть дашборд с дедлайнами и курсами
+  mirea-moodle-mcp today | week       план на сегодня / на 7 дней (лекции, сроки, тесты)
+  mirea-moodle-mcp calendar           адрес подписки на календарь Moodle для Google/Apple/Яндекс
   mirea-moodle-mcp group ИКБО-50-23   задать группу (фильтр лекций)
   mirea-moodle-mcp clients            список поддерживаемых агентов/IDE и какие найдены
   mirea-moodle-mcp install <id|detected>  подключить к клиенту (claude-desktop, claude-code, cursor,
@@ -37,7 +39,7 @@ func main() {
 	s := newSess(baseURL())
 	if len(os.Args) < 2 {
 		go s.keepalive(10 * time.Minute)
-		if err := newServer(append(tools(s), scheduleTools(s)...)).serve(os.Stdin, os.Stdout); err != nil {
+		if err := newServer(allTools(s)).serve(os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -129,9 +131,31 @@ func main() {
 		}
 		remoteMode = true
 		go s.keepalive(10 * time.Minute)
-		if err := serveHTTP(newServer(append(tools(s), scheduleTools(s)...)), addr, noAuth, origins); err != nil {
+		if err := serveHTTP(newServer(allTools(s)), addr, noAuth, origins); err != nil {
 			die(err)
 		}
+	case "calendar":
+		u, err := s.calendarURL()
+		if err != nil {
+			die(err)
+		}
+		h := calendarHowTo(u)
+		fmt.Println("Адрес подписки на календарь Moodle (личный, никому не отправляй):")
+		fmt.Println(" ", u)
+		fmt.Println("  Apple:", h["webcal"])
+		for _, l := range h["how"].([]string) {
+			fmt.Println("  •", l)
+		}
+	case "today", "week":
+		n := 1
+		if os.Args[1] == "week" {
+			n = 7
+		}
+		days, err := s.agenda(time.Now().In(msk), n)
+		if err != nil {
+			die(err)
+		}
+		printAgenda(days)
 	case "version", "-v", "--version":
 		fmt.Println(version)
 	case "help", "-h", "--help":
@@ -248,4 +272,25 @@ func openURL(u string) {
 		c = exec.Command("xdg-open", u)
 	}
 	c.Start()
+}
+
+func allTools(s *sess) []*tool {
+	return append(append(tools(s), scheduleTools(s)...), extraTools(s)...)
+}
+
+func printAgenda(days []obj) {
+	for _, d := range days {
+		fmt.Println(d["date"])
+		items := d["items"].([]obj)
+		if len(items) == 0 {
+			fmt.Println("  —")
+		}
+		for _, it := range items {
+			c := ""
+			if v, ok := it["course"].(string); ok {
+				c = " · " + v
+			}
+			fmt.Printf("  %-11s %-17s %s%s\n", it["time"], it["kind"], it["name"], c)
+		}
+	}
 }

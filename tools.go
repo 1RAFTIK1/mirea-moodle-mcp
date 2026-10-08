@@ -452,13 +452,18 @@ func tools(s *sess) []*tool {
 			},
 		},
 		{
-			Name: "session_status", Desc: "Проверить, жива ли сессия Moodle.", Schema: schema(obj{}), Ann: ro,
+			Name: "session_status", Desc: "Проверить, жива ли сессия Moodle, и сколько она проживёт без активности (сервер сам продлевает её каждые 10 минут, пока запущен).", Schema: schema(obj{}), Ann: ro,
 			fn: func(json.RawMessage) (any, error) {
 				var r json.RawMessage
 				if err := s.call("core_course_get_enrolled_courses_by_timeline_classification", obj{"classification": "inprogress", "limit": 1, "offset": 0, "sort": "fullname"}, &r); err != nil {
 					return nil, err
 				}
-				return obj{"ok": true, "userid": s.uid}, nil
+				o := obj{"ok": true, "userid": s.uid}
+				if left, err := s.sessionLeft(); err == nil && left > 0 {
+					o["idle_timeout_min"] = left / 60
+					o["note"] = "сессия умирает после этого времени без запросов; пока MCP-сервер запущен, он её продлевает. Если компьютер спал дольше — нужен новый cookie"
+				}
+				return o, nil
 			},
 		},
 	}

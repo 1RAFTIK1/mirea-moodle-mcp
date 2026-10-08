@@ -130,6 +130,11 @@ func doctor(s *sess) int {
 	}
 	err = ping(s)
 	ok(err == nil, fmt.Sprintf("сессия Moodle жива (userid %d)", s.uid), "сессия: "+fmt.Sprint(err))
+	if err == nil {
+		if left, e := s.sessionLeft(); e == nil && left > 0 {
+			fmt.Printf("• без активности сессия проживёт %d мин; запущенный MCP-сервер продлевает её сам\n", left/60)
+		}
+	}
 	g := loadCfg().Group
 	ok(g != "", "группа: "+g, "группа не задана — лекции не фильтруются: mirea-moodle-mcp group ИКБО-XX-XX")
 	fmt.Println("• разрешённые папки:", strings.Join(roots(), ", "))
