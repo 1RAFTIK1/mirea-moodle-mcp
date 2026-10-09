@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <style>
-  :root { color-scheme: light dark; --fg:#1f2328; --mut:#59636e; --ok:#1a7f37; --bad:#cf222e; --bg:#fff; --bd:#d1d9e0; --btn:#0969da; }
-  @media (prefers-color-scheme: dark) { :root { --fg:#e6edf3; --mut:#9198a1; --ok:#3fb950; --bad:#f85149; --bg:#151b23; --bd:#3d444d; --btn:#4493f8; } }
-  body { font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; width: 300px; margin: 0; padding: 14px; color: var(--fg); background: var(--bg); }
+  :root { color-scheme: light dark; --fg:#1f2328; --mut:#59636e; --ok:#1a7f37; --bad:#cf222e; --bg:#fff; --bd:#d1d9e0; --btn:#0969da; --warn:#9a6700; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#e6edf3; --mut:#9198a1; --ok:#3fb950; --bad:#f85149; --bg:#151b23; --bd:#3d444d; --btn:#4493f8; --warn:#d29922; } }
+  body { font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; width: 320px; margin: 0; padding: 14px; color: var(--fg); background: var(--bg); }
   h1 { font-size: 14px; margin: 0 0 10px; }
   #st { padding: 8px 10px; border: 1px solid var(--bd); border-radius: 6px; margin-bottom: 10px; }
   .ok { color: var(--ok); } .bad { color: var(--bad); } .mut { color: var(--mut); font-size: 12px; }
@@ -14,11 +14,25 @@
   label { display: flex; gap: 6px; align-items: center; margin-top: 10px; }
   code { font-size: 11px; user-select: all; word-break: break-all; }
   a { color: var(--btn); }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--mut); margin: 14px 0 6px; }
+  #dl { list-style: none; margin: 0; padding: 0; }
+  #dl li { padding: 6px 8px; border: 1px solid var(--bd); border-radius: 6px; margin-bottom: 6px; cursor: pointer; }
+  #dl li:hover { border-color: var(--btn); }
+  .nm { font-weight: 600; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+  .cr { color: var(--mut); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .due { font-size: 12px; } .soon { color: var(--bad); font-weight: 600; } .near { color: var(--warn); font-weight: 600; }
+  #dlsec[hidden] { display: none; }
+  #dlmore { margin-bottom: 12px; }
 </style>
 </head>
 <body>
   <h1>Moodle → MCP</h1>
   <div id="st" class="mut">…</div>
+  <section id="dlsec" hidden>
+    <h2>Ближайшие дедлайны</h2>
+    <ul id="dl"></ul>
+    <div id="dlmore" class="mut"></div>
+  </section>
   <button id="go">Подключить</button>
   <label><input type="checkbox" id="auto"> Автообновлять после входа</label>
   <p class="mut">Cookie передаётся только программе mirea-moodle-mcp на этом компьютере.</p>

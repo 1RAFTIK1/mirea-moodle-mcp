@@ -80,6 +80,12 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   (async () => {
     if (msg.type === "connect") return push(true);
     if (msg.type === "check") return native({ type: "status" });
+    if (msg.type === "deadlines") {
+      const r = await native({ type: "deadlines", limit: 4 });
+      if (r.ok) await chrome.storage.session.set({ dl: { ...r, at: Date.now() } });
+      return r;
+    }
+    if (msg.type === "cachedDeadlines") return (await chrome.storage.session.get("dl")).dl || null;
     if (msg.type === "setAuto") {
       await chrome.storage.local.set({ auto: !!msg.auto });
       return msg.auto ? push(false) : getState();

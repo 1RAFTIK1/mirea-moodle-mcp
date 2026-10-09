@@ -127,6 +127,8 @@ CI (`.github/workflows/ci.yml`) гоняет то же на Linux/macOS/Windows.
   В этом режиме stdout занят протоколом (uint32 LE длина + JSON), печатать туда ничего нельзя.
 - `setup` (шаг 1): сессия жива → пропуск; иначе при найденном браузере предлагает расширение (`setupExtension`) и опрашивает
   `session.json`, пока его не обновит хост; Enter или 15 минут → ручной ввод. Ввод терминала идёт через `lines()`, одну горутину.
+- Сообщения хоста: `ping`, `status`, `set_cookie {cookie, force}`, `deadlines {limit}` (тот же `actionEvents`, что у инструмента `deadlines`).
+- Браузер найден, если в профиле есть `Local State`: пустые `NativeMessagingHosts` создают и чужие установщики (Claude in Chrome).
 - Ответы хоста не содержат cookie и `sesskey`. Неудачная cookie не перезаписывает `session.json`.
 - Проверка без браузера:
 

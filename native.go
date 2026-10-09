@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // Browser extension bridge (Native Messaging).
@@ -71,6 +72,30 @@ type nativeMsg struct {
 	Type   string `json:"type"`
 	Cookie string `json:"cookie"`
 	Force  bool   `json:"force"`
+	Limit  int    `json:"limit"`
+}
+
+// nextDeadlines: the n nearest upcoming unfinished timeline items (same source
+// as the deadlines tool) plus how many are already overdue (last 14 days).
+func (s *sess) nextDeadlines(n int, now time.Time) ([]obj, int, error) {
+	if n <= 0 || n > 10 {
+		n = 4
+	}
+	evs, err := s.actionEvents(now.Add(-14*24*time.Hour).Unix(), now.Add(60*24*time.Hour).Unix())
+	if err != nil {
+		return nil, 0, err
+	}
+	items, over := []obj{}, 0
+	for _, e := range evs {
+		if e.Over || e.TS < now.Unix() {
+			over++
+			continue
+		}
+		if len(items) < n {
+			items = append(items, obj{"name": shortEvent(e.Name), "course": e.Course.Name, "ts": e.TS, "type": e.Mod, "url": e.URL})
+		}
+	}
+	return items, over, nil
 }
 
 // handleNative answers one message. Replies never contain the cookie or sesskey.
@@ -83,6 +108,12 @@ func handleNative(s *sess, m nativeMsg) obj {
 			return obj{"ok": false, "needLogin": errors.Is(err, errExpired), "error": err.Error()}
 		}
 		return obj{"ok": true, "uid": s.uid, "version": version}
+	case "deadlines":
+		items, over, err := s.nextDeadlines(m.Limit, time.Now())
+		if err != nil {
+			return obj{"ok": false, "needLogin": errors.Is(err, errExpired), "error": err.Error()}
+		}
+		return obj{"ok": true, "items": items, "overdue": over}
 	case "set_cookie":
 		v := strings.TrimSpace(m.Cookie)
 		s.mu.Lock()
@@ -132,12 +163,17 @@ type nmBrowser struct {
 	seen []string // windows: install markers (any existing = browser present)
 }
 
+// found: the browser has run at least once. An existing profile dir is not
+// enough: other native-host installers (e.g. Claude in Chrome) create
+// <dir>/NativeMessagingHosts for every Chromium browser, installed or not.
+// "Local State" is written by the browser itself on first start.
 func (b nmBrowser) found() bool {
+	ds := b.seen
 	if b.dir != "" {
-		return exists(b.dir)
+		ds = []string{b.dir}
 	}
-	for _, d := range b.seen {
-		if exists(d) {
+	for _, d := range ds {
+		if exists(filepath.Join(d, "Local State")) {
 			return true
 		}
 	}
@@ -375,4 +411,14 @@ var reveal = func(dir string) {
 	case "windows":
 		exec.Command("explorer", dir).Start()
 	}
+}
+
+// shortEvent drops Moodle's "… - срок сдачи" style suffix: the popup shows the date anyway.
+func shortEvent(n string) string {
+	for _, suf := range []string{" - срок сдачи", " — срок сдачи", " срок сдачи", " должно быть выполнено", " is due"} {
+		if t := strings.TrimSuffix(n, suf); t != n && strings.TrimSpace(t) != "" {
+			return strings.TrimSpace(t)
+		}
+	}
+	return n
 }

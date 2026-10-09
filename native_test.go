@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -126,6 +127,13 @@ func TestInstallHostManifest(t *testing.T) {
 		}
 	}
 	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "Local State"), []byte("{}"), 0o644)
+	// an empty profile dir (left by another native-host installer) is not a browser
+	for _, b := range nmBrowsers() {
+		if strings.Contains(b.Name, "Edge") {
+			os.MkdirAll(filepath.Join(b.dir, "NativeMessagingHosts"), 0o755)
+		}
+	}
 	got, err := installHost("/opt/mm", []string{extID})
 	if err != nil || len(got) != 1 {
 		t.Fatalf("got %v err %v", got, err)
@@ -195,6 +203,7 @@ func fakeSetupEnv(t *testing.T) chan string {
 	for _, b := range nmBrowsers() {
 		if strings.Contains(b.Name, "Chrome") {
 			os.MkdirAll(b.dir, 0o755)
+			os.WriteFile(filepath.Join(b.dir, "Local State"), []byte("{}"), 0o644)
 		}
 	}
 	oo, oe, or, ow, op := openURL, exePath, reveal, extWait, extPoll
@@ -251,5 +260,33 @@ func TestSetupExtensionDeclined(t *testing.T) {
 	in <- "n"
 	if sessionViaExtension(s) || exists(extDir()) {
 		t.Fatal("declined but extension was set up")
+	}
+}
+
+func TestNativeDeadlines(t *testing.T) {
+	now := time.Now().Unix()
+	s := stubSess(t, func(w http.ResponseWriter, r *http.Request) {
+		m, _ := ajaxReq(r)
+		if m != "core_calendar_get_action_events_by_timesort" {
+			t.Errorf("method %s", m)
+		}
+		ev := []map[string]any{{"id": 1, "name": "old", "timesort": now - 3600, "overdue": true, "course": map[string]any{"fullname": "C0"}}}
+		for i := 1; i <= 6; i++ {
+			ev = append(ev, map[string]any{"id": 1 + i, "name": fmt.Sprint("ПР", i, " - срок сдачи"), "timesort": now + int64(i)*3600,
+				"url": "https://online-edu.mirea.ru/mod/assign/view.php?id=" + fmt.Sprint(i), "course": map[string]any{"fullname": "Курс"}})
+		}
+		json.NewEncoder(w).Encode([]any{map[string]any{"error": false, "data": map[string]any{"events": ev}}})
+	})
+	r := handleNative(s, nativeMsg{Type: "deadlines", Limit: 4})
+	items, _ := r["items"].([]obj)
+	if r["ok"] != true || len(items) != 4 || r["overdue"] != 1 || items[0]["name"] != "ПР1" || items[3]["name"] != "ПР4" || items[0]["course"] != "Курс" {
+		t.Fatalf("got %v", r)
+	}
+
+	s2 := stubSess(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"error":"…","errorcode":"invalidsesskey"}`)
+	})
+	if r := handleNative(s2, nativeMsg{Type: "deadlines"}); r["ok"] != false || r["needLogin"] != true {
+		t.Fatalf("expired: %v", r)
 	}
 }
