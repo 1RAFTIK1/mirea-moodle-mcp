@@ -8,7 +8,7 @@
 - Go ≥ 1.22, **только стандартная библиотека**, пакет `main`. Внешние зависимости не добавляем.
 - Мобильный API Moodle на online-edu выключен. Сервер работает как браузер: cookie `MoodleSession` + `sesskey`,
   AJAX `POST /lib/ajax/service.php?sesskey=…&info=<функция>` и разбор HTML регулярками.
-- Логина нет и не будет: сессию пользователь берёт из своего браузера (`mirea-moodle-mcp cookie …`).
+- Логина нет и не будет: сессию пользователь берёт из своего браузера (`mirea-moodle-mcp cookie …` или расширение `extension/`).
   Автоматизацию SSO (sso.mirea.ru, 2FA, привязку MAX) не делаем.
 - Проверять код вживую можно только с компьютера, который видит online-edu.mirea.ru
   (часть зарубежных IP и облачные контейнеры туда не пускают).
@@ -28,6 +28,7 @@
 | `dashboard.go` | HTML-дашборд (`html/template`) |
 | `roots.go` | песочница путей: сдавать/скачивать только из разрешённых папок |
 | `clients.go` | автоподключение к 10 клиентам (форматы конфигов) |
+| `native.go`, `extension/` | расширение браузера (MV3) и Native Messaging host: приём `MoodleSession`, регистрация в Chromium-браузерах, `//go:embed` |
 | `*_test.go`, `testdata/` | тесты на фейковом Moodle и HTML-фикстурах |
 
 ## Какие источники Moodle уже используются
@@ -114,5 +115,20 @@ CI (`.github/workflows/ci.yml`) гоняет то же на Linux/macOS/Windows.
 ## Идеи на потом
 
 - Telegram-бот с напоминаниями: нужен сервер с доступом к online-edu (из зарубежного ДЦ, скорее всего, не пустит) — запускать дома или через туннель.
-- Расширение браузера, которое само обновляет `MoodleSession` после входа.
 - Литература из ЭБС «Лань» по ссылкам `lanebs` в курсах.
+
+## Расширение браузера
+
+- Файлы в `extension/` вшиты в бинарник (`//go:embed`); `mirea-moodle-mcp extension` распаковывает их в `<cfgDir>/extension`
+  и пишет манифест хоста `ru.mirea.moodle_mcp` в `NativeMessagingHosts` каждого найденного Chromium-браузера (Windows: реестр HKCU).
+- ID расширения постоянный: он вычисляется из поля `key` в `manifest.json` (тест `TestEmbeddedExtension`). Закрытый ключ
+  в репозиторий не кладём, для загрузки распакованного расширения он не нужен. Сборку из Chrome Web Store добавить через `extension --id <ID>`.
+- Браузер запускает бинарник с аргументом `chrome-extension://<ID>/`, и `main()` уходит в `runNativeHost`.
+  В этом режиме stdout занят протоколом (uint32 LE длина + JSON), печатать туда ничего нельзя.
+- Ответы хоста не содержат cookie и `sesskey`. Неудачная cookie не перезаписывает `session.json`.
+- Проверка без браузера:
+
+```sh
+go build -o /tmp/mm . && python3 -c 'import json,struct,sys;b=json.dumps({"type":"status"}).encode();sys.stdout.buffer.write(struct.pack("<I",len(b))+b)' \
+  | /tmp/mm chrome-extension://hfnkcippkhmahfiahihmncblkmfanibd/ | tail -c +5
+```

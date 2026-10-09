@@ -41,7 +41,7 @@ type saved struct {
 
 func sessPath() string { return filepath.Join(cfgDir(), "session.json") }
 
-var errExpired = errors.New("сессия Moodle истекла или не задана: войди на online-edu.mirea.ru в браузере и выполни `mirea-moodle-mcp cookie <MoodleSession>` (см. README)")
+var errExpired = errors.New("сессия Moodle истекла или не задана: войди на online-edu.mirea.ru в браузере и выполни `mirea-moodle-mcp cookie <MoodleSession>` или нажми «Подключить» в расширении браузера (см. README)")
 
 var (
 	reSesskey = regexp.MustCompile(`"sesskey":"([^"]+)"`)

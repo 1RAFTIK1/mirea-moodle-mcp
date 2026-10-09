@@ -16,6 +16,8 @@ const usage = `mirea-moodle-mcp — MCP-сервер для online-edu.mirea.ru 
 
   mirea-moodle-mcp setup              первая настройка: сессия + подключение к Claude Desktop
   mirea-moodle-mcp cookie <значение>  обновить сессию (значение cookie MoodleSession)
+  mirea-moodle-mcp extension [uninstall|path]  расширение браузера: кнопка «Подключить» и
+                                      автообновление cookie без DevTools (Chrome, Яндекс, Edge…)
   mirea-moodle-mcp status             проверить, жива ли сессия
   mirea-moodle-mcp doctor             диагностика: сеть до online-edu, сессия, группа, папки, клиенты
   mirea-moodle-mcp dashboard          открыть дашборд с дедлайнами и курсами
@@ -37,6 +39,9 @@ const usage = `mirea-moodle-mcp — MCP-сервер для online-edu.mirea.ru 
 
 func main() {
 	s := newSess(baseURL())
+	if isNativeLaunch(os.Args[1:]) { // started by the browser extension
+		os.Exit(runNativeHost(s, os.Stdin, os.Stdout))
+	}
 	if len(os.Args) < 2 {
 		go s.keepalive(10 * time.Minute)
 		if err := newServer(allTools(s)).serve(os.Stdin, os.Stdout); err != nil {
@@ -60,6 +65,10 @@ func main() {
 			die(err)
 		}
 		fmt.Printf("✓ сессия сохранена%s\n", who(name))
+	case "extension":
+		if err := cmdExtension(os.Args[2:]); err != nil {
+			die(err)
+		}
 	case "status":
 		if err := ping(s); err != nil {
 			die(err)
@@ -197,6 +206,9 @@ func setup(s *sess) int {
 Шаг 1. Сессия Moodle.
 Сервер работает от твоего имени через сессию браузера — пароль ему не нужен.
 
+Проще всего через расширение браузера (Chrome, Яндекс, Edge, Brave): прерви настройку (Ctrl+C),
+выполни ` + "`mirea-moodle-mcp extension`" + ` и нажми «Подключить» в расширении. Или вручную:
+
   1) Открой https://online-edu.mirea.ru/my/ и войди как обычно (SSO МИРЭА).
   2) Открой инструменты разработчика:
        Chrome / Яндекс / Edge:  F12 (на Mac ⌥⌘I) → Application → Cookies → https://online-edu.mirea.ru
@@ -257,6 +269,7 @@ func setup(s *sess) int {
 
 Когда сессия истечёт (Claude скажет об этом), снова войди в браузере и выполни:
   mirea-moodle-mcp cookie <новое значение MoodleSession>
+С расширением (mirea-moodle-mcp extension) достаточно просто войти в Moodle — cookie обновится сама.
 `)
 	return 0
 }

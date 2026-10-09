@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: light dark; --fg:#1f2328; --mut:#59636e; --ok:#1a7f37; --bad:#cf222e; --bg:#fff; --bd:#d1d9e0; --btn:#0969da; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#e6edf3; --mut:#9198a1; --ok:#3fb950; --bad:#f85149; --bg:#151b23; --bd:#3d444d; --btn:#4493f8; } }
+  body { font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; width: 300px; margin: 0; padding: 14px; color: var(--fg); background: var(--bg); }
+  h1 { font-size: 14px; margin: 0 0 10px; }
+  #st { padding: 8px 10px; border: 1px solid var(--bd); border-radius: 6px; margin-bottom: 10px; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .mut { color: var(--mut); font-size: 12px; }
+  button { width: 100%; padding: 8px; font: inherit; font-weight: 600; color: #fff; background: var(--btn); border: 0; border-radius: 6px; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: default; }
+  label { display: flex; gap: 6px; align-items: center; margin-top: 10px; }
+  code { font-size: 11px; user-select: all; word-break: break-all; }
+  a { color: var(--btn); }
+</style>
+</head>
+<body>
+  <h1>Moodle → MCP</h1>
+  <div id="st" class="mut">…</div>
+  <button id="go">Подключить</button>
+  <label><input type="checkbox" id="auto"> Автообновлять после входа</label>
+  <p class="mut">Cookie передаётся только программе mirea-moodle-mcp на этом компьютере.</p>
+  <script src="popup.js"></script>
+</body>
+</html>

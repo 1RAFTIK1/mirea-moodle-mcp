@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "МИРЭА Moodle → MCP",
+  "short_name": "Moodle MCP",
+  "version": "0.1.0",
+  "description": "Передаёт сессию online-edu.mirea.ru локальному mirea-moodle-mcp: кнопка «Подключить» и автообновление после входа.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnfqj3H6JKVciWU0OybG1Swyl7IJFXmmw3tqYBCvEQXL0RlTxYRw5JjIurK9O7qY8CDg872QLy2bqFAhhLxu/KWAfVd0j/QtQ3VxpLtWvAgiHWnWqM78mfsCUGIrEco1ClXuxjUfh5sHzIAVVlXljkM8SF71VV4zWnb0Wwksu/SqO7tcDysJacklBrlR4YdUMUxmbpXYxm75KlJeT/IgVIo2n6bIySq3VB1uqyVK5GKEjq4KqwXQ720/iyXDq66k0JYhpAHLvTO4+Oq1BmVmu+b8VoPnh9jvoAWQjPVwSMp8ykwOVD4VrQzT/xfVoy5oS7gJSPNIAqrLSKjcBqzCkFwIDAQAB",
+  "permissions": ["cookies", "nativeMessaging", "storage", "alarms"],
+  "host_permissions": ["https://online-edu.mirea.ru/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Moodle MCP", "default_popup": "popup.html" },
+  "minimum_chrome_version": "110"
+}
