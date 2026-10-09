@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -191,12 +192,41 @@ func die(err error) {
 	os.Exit(1)
 }
 
-var stdin = bufio.NewReader(os.Stdin)
+// Terminal input goes through one reader goroutine, so setup can wait for the
+// browser extension and for Enter at the same time.
+var (
+	lineOnce sync.Once
+	lineCh   chan string
+)
+
+func lines() chan string {
+	lineOnce.Do(func() {
+		lineCh = make(chan string)
+		go func() {
+			r := bufio.NewReader(os.Stdin)
+			for {
+				l, err := r.ReadString('\n')
+				if l != "" || err == nil {
+					lineCh <- strings.TrimSpace(l)
+				}
+				if err != nil {
+					close(lineCh)
+					return
+				}
+			}
+		}()
+	})
+	return lineCh
+}
 
 func ask(q string) string {
 	fmt.Print(q)
-	l, _ := stdin.ReadString('\n')
-	return strings.TrimSpace(l)
+	return <-lines() // "" on EOF
+}
+
+func yes(a string) bool {
+	a = strings.ToLower(strings.TrimSpace(a))
+	return a == "" || a == "y" || a == "д" || a == "да" || a == "yes"
 }
 
 func setup(s *sess) int {
@@ -206,31 +236,11 @@ func setup(s *sess) int {
 Шаг 1. Сессия Moodle.
 Сервер работает от твоего имени через сессию браузера — пароль ему не нужен.
 
-Проще всего через расширение браузера (Chrome, Яндекс, Edge, Brave): прерви настройку (Ctrl+C),
-выполни ` + "`mirea-moodle-mcp extension`" + ` и нажми «Подключить» в расширении. Или вручную:
-
-  1) Открой https://online-edu.mirea.ru/my/ и войди как обычно (SSO МИРЭА).
-  2) Открой инструменты разработчика:
-       Chrome / Яндекс / Edge:  F12 (на Mac ⌥⌘I) → Application → Cookies → https://online-edu.mirea.ru
-       Firefox:                 F12 → Хранилище → Куки → https://online-edu.mirea.ru
-       Safari:                  ⌥⌘I → Хранилище → Cookies (сначала включи меню «Разработка» в настройках)
-  3) Скопируй значение (Value) строки MoodleSession.
-
-Никому это значение не отправляй — это доступ к твоему аккаунту, пока сессия жива.
-
 `)
-	openURL(s.base + "/my/")
-	for i := 0; ; i++ {
-		v := ask("MoodleSession: ")
-		name, err := s.setCookie(v)
-		if err == nil {
-			fmt.Printf("✓ вошли%s\n\n", who(name))
-			break
-		}
-		fmt.Println("✗", err)
-		if i >= 2 {
-			return 1
-		}
+	if s.key != "" && ping(s) == nil {
+		fmt.Printf("✓ сессия уже работает (userid %d)\n\n", s.uid)
+	} else if !sessionViaExtension(s) && !sessionManual(s) {
+		return 1
 	}
 
 	if g := normGroup(ask("Твоя группа (например ИКБО-50-23, Enter — пропустить): ")); g != "" {
@@ -249,7 +259,7 @@ func setup(s *sess) int {
 	}
 	if len(found) == 0 {
 		fmt.Println("Не нашёл установленных клиентов MCP. Позже: mirea-moodle-mcp clients / install <id>")
-	} else if a := strings.ToLower(ask("Подключить к: " + strings.Join(found, ", ") + "? [Y/n] ")); a == "" || a == "y" || a == "д" || a == "да" || a == "yes" {
+	} else if yes(ask("Подключить к: " + strings.Join(found, ", ") + "? [Y/n] ")) {
 		if err := cmdInstall("detected"); err != nil {
 			fmt.Println("✗", err)
 		}
@@ -267,14 +277,13 @@ func setup(s *sess) int {
 Готово. Перезапусти подключённые приложения (Claude Desktop — полностью, через Quit) и спроси, например:
   «какие у меня дедлайны на этой неделе?»
 
-Когда сессия истечёт (Claude скажет об этом), снова войди в браузере и выполни:
-  mirea-moodle-mcp cookie <новое значение MoodleSession>
-С расширением (mirea-moodle-mcp extension) достаточно просто войти в Moodle — cookie обновится сама.
+Когда сессия истечёт (Claude скажет об этом), просто снова войди на online-edu.mirea.ru —
+расширение обновит cookie само. Без расширения: mirea-moodle-mcp cookie <новое значение MoodleSession>
 `)
 	return 0
 }
 
-func openURL(u string) {
+var openURL = func(u string) {
 	var c *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
@@ -306,4 +315,76 @@ func printAgenda(days []obj) {
 			fmt.Printf("  %-11s %-17s %s%s\n", it["time"], it["kind"], it["name"], c)
 		}
 	}
+}
+
+var extWait, extPoll = 15 * time.Minute, 2 * time.Second
+
+// sessionViaExtension offers the browser extension and waits until it delivers
+// a working cookie (session.json changes). false → fall back to manual.
+func sessionViaExtension(s *sess) bool {
+	if len(foundBrowsers()) == 0 {
+		return false
+	}
+	if !yes(ask("Подключить через расширение браузера, без DevTools (рекомендуется)? [Y/n] ")) {
+		return false
+	}
+	start := time.Now()
+	if _, err := setupExtension([]string{extID}); err != nil {
+		fmt.Println("✗", err)
+		return false
+	}
+	openURL(s.base + "/my/")
+	fmt.Println("\n… жду, пока расширение передаст сессию (Enter — вставить cookie вручную)")
+	t := time.NewTicker(extPoll)
+	defer t.Stop()
+	deadline := time.After(extWait)
+	in := lines()
+	for {
+		select {
+		case _, ok := <-in:
+			if ok {
+				return false
+			}
+			in = nil // stdin closed: keep waiting for the extension only
+		case <-deadline:
+			fmt.Println("Не дождался расширения — давай вручную.")
+			return false
+		case <-t.C:
+			if st, err := os.Stat(sessPath()); err != nil || !st.ModTime().After(start) {
+				continue
+			}
+			s.refresh()
+			if err := ping(s); err == nil {
+				fmt.Printf("✓ расширение подключено, сессия работает (userid %d)\n\n", s.uid)
+				return true
+			}
+			start = time.Now() // stale/failed write: keep waiting for the next one
+		}
+	}
+}
+
+// sessionManual: the old DevTools way.
+func sessionManual(s *sess) bool {
+	fmt.Print(`Вручную через инструменты разработчика:
+
+  1) Открой https://online-edu.mirea.ru/my/ и войди как обычно (SSO МИРЭА).
+  2) Открой инструменты разработчика:
+       Chrome / Яндекс / Edge:  F12 (на Mac ⌥⌘I) → Application → Cookies → https://online-edu.mirea.ru
+       Firefox:                 F12 → Хранилище → Куки → https://online-edu.mirea.ru
+       Safari:                  ⌥⌘I → Хранилище → Cookies (сначала включи меню «Разработка» в настройках)
+  3) Скопируй значение (Value) строки MoodleSession.
+
+Никому это значение не отправляй — это доступ к твоему аккаунту, пока сессия жива.
+
+`)
+	openURL(s.base + "/my/")
+	for i := 0; i < 3; i++ {
+		name, err := s.setCookie(ask("MoodleSession: "))
+		if err == nil {
+			fmt.Printf("✓ вошли%s\n\n", who(name))
+			return true
+		}
+		fmt.Println("✗", err)
+	}
+	return false
 }

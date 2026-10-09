@@ -127,8 +127,31 @@ func runNativeHost(s *sess, in io.Reader, out io.Writer) int {
 
 type nmBrowser struct {
 	Name string
-	dir  string // profile root; manifest goes to <dir>/NativeMessagingHosts (darwin/linux)
-	reg  string // HKCU key prefix (windows)
+	dir  string   // profile root; manifest goes to <dir>/NativeMessagingHosts (darwin/linux)
+	reg  string   // HKCU key prefix (windows)
+	seen []string // windows: install markers (any existing = browser present)
+}
+
+func (b nmBrowser) found() bool {
+	if b.dir != "" {
+		return exists(b.dir)
+	}
+	for _, d := range b.seen {
+		if exists(d) {
+			return true
+		}
+	}
+	return false
+}
+
+func foundBrowsers() []nmBrowser {
+	var r []nmBrowser
+	for _, b := range nmBrowsers() {
+		if b.found() {
+			r = append(r, b)
+		}
+	}
+	return r
 }
 
 func nmBrowsers() []nmBrowser {
@@ -146,11 +169,18 @@ func nmBrowsers() []nmBrowser {
 			{Name: "Arc", dir: filepath.Join(as, "Arc", "User Data")},
 		}
 	case "windows":
+		la := os.Getenv("LOCALAPPDATA")
+		if la == "" {
+			la = filepath.Join(h, "AppData", "Local")
+		}
+		ud := func(p ...string) string { return filepath.Join(append([]string{la}, append(p, "User Data")...)...) }
 		return []nmBrowser{
-			{Name: "Яндекс Браузер", reg: `HKCU\Software\Yandex\YandexBrowser`},
-			{Name: "Google Chrome (и Brave, Vivaldi)", reg: `HKCU\Software\Google\Chrome`},
-			{Name: "Chromium", reg: `HKCU\Software\Chromium`},
-			{Name: "Microsoft Edge", reg: `HKCU\Software\Microsoft\Edge`},
+			{Name: "Яндекс Браузер", reg: `HKCU\Software\Yandex\YandexBrowser`, seen: []string{ud("Yandex", "YandexBrowser")}},
+			// Brave and Vivaldi read Chrome's key.
+			{Name: "Google Chrome / Brave / Vivaldi", reg: `HKCU\Software\Google\Chrome`,
+				seen: []string{ud("Google", "Chrome"), ud("BraveSoftware", "Brave-Browser"), filepath.Join(la, "Vivaldi", "User Data")}},
+			{Name: "Chromium", reg: `HKCU\Software\Chromium`, seen: []string{ud("Chromium")}},
+			{Name: "Microsoft Edge", reg: `HKCU\Software\Microsoft\Edge`, seen: []string{ud("Microsoft", "Edge")}},
 		}
 	}
 	cfg := filepath.Join(h, ".config")
@@ -182,7 +212,7 @@ func hostManifest(exe string, ids []string) []byte {
 	return append(b, '\n')
 }
 
-func exePath() (string, error) {
+var exePath = func() (string, error) {
 	e, err := os.Executable()
 	if err != nil {
 		return "", err
@@ -231,7 +261,7 @@ func installHost(exe string, ids []string) ([]string, error) {
 		if err := os.WriteFile(f, man, 0o644); err != nil {
 			return nil, err
 		}
-		for _, b := range nmBrowsers() {
+		for _, b := range foundBrowsers() {
 			k := b.reg + `\NativeMessagingHosts\` + nativeHost
 			if out, err := exec.Command("reg", "add", k, "/ve", "/t", "REG_SZ", "/d", f, "/f").CombinedOutput(); err != nil {
 				return done, fmt.Errorf("reg add %s: %v %s", k, err, out)
@@ -240,10 +270,7 @@ func installHost(exe string, ids []string) ([]string, error) {
 		}
 		return done, nil
 	}
-	for _, b := range nmBrowsers() {
-		if !exists(b.dir) {
-			continue
-		}
+	for _, b := range foundBrowsers() {
 		d := filepath.Join(b.dir, "NativeMessagingHosts")
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return done, err
@@ -294,37 +321,58 @@ func cmdExtension(args []string) error {
 	default:
 		return fmt.Errorf("неизвестная подкоманда %q (install | uninstall | path)", sub)
 	}
+	if _, err := setupExtension(ids); err != nil {
+		return err
+	}
+	fmt.Print(`
+Дальше cookie обновляется сама при каждом входе в Moodle.
+После обновления mirea-moodle-mcp запусти эту команду снова и нажми «Обновить» у расширения.
+`)
+	return nil
+}
+
+var errNoBrowser = errors.New("не нашёл Chromium-браузеров (Chrome, Яндекс, Edge, Brave, Vivaldi, Arc). Firefox и Safari пока не поддерживаются")
+
+// setupExtension unpacks the extension, registers the host and prints the
+// one-time "load unpacked" steps. Used by `extension` and by `setup`.
+func setupExtension(ids []string) (string, error) {
+	if len(foundBrowsers()) == 0 {
+		return "", errNoBrowser
+	}
 	exe, err := exePath()
 	if err != nil {
-		return err
+		return "", err
 	}
 	dir, err := unpackExtension()
 	if err != nil {
-		return err
+		return "", err
 	}
 	got, err := installHost(exe, ids)
 	if err != nil {
-		return err
-	}
-	if len(got) == 0 {
-		return errors.New("не нашёл Chromium-браузеров (Chrome, Яндекс, Edge, Brave, Vivaldi, Arc). Firefox и Safari пока не поддерживаются")
+		return "", err
 	}
 	fmt.Println("✓ программа зарегистрирована для:", strings.Join(got, ", "))
 	fmt.Println("✓ расширение распаковано в:", dir)
 	fmt.Print(`
-Осталось один раз загрузить расширение в браузер:
-  1) открой страницу расширений: browser://extensions (Яндекс), chrome://extensions (Chrome),
-     edge://extensions (Edge) — адрес вставь в адресную строку вручную;
+Один раз загрузи расширение в браузер:
+  1) вставь в адресную строку: chrome://extensions (Chrome, Brave, Vivaldi, Arc),
+     browser://extensions (Яндекс), edge://extensions (Edge);
   2) включи «Режим разработчика»;
   3) «Загрузить распакованное расширение» → выбери папку выше
      (или перетащи её на страницу расширений);
   4) закрепи значок «Moodle MCP», войди на online-edu.mirea.ru и нажми «Подключить».
-
-Дальше cookie обновляется сама при каждом входе в Moodle. Перезапусти браузер, если он был открыт.
-После обновления mirea-moodle-mcp запусти эту команду снова и нажми «Обновить» у расширения.
+Если браузер был открыт до этой команды и расширение пишет «программа не найдена» — перезапусти браузер.
 `)
-	if runtime.GOOS == "darwin" {
+	reveal(dir)
+	return dir, nil
+}
+
+// reveal shows the unpacked extension folder in the file manager.
+var reveal = func(dir string) {
+	switch runtime.GOOS {
+	case "darwin":
 		exec.Command("open", "-R", dir).Start()
+	case "windows":
+		exec.Command("explorer", dir).Start()
 	}
-	return nil
 }
